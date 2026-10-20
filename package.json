@@ -1,6 +1,6 @@
 {
   "name": "kasanome",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Review large diffs and stacked PRs by architectural layer, with verified findings, inline comments, and a guided dashboard. Works with Claude, Codex, and other agent CLIs.",
   "type": "module",
   "bin": {

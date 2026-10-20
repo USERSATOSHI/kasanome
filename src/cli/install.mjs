@@ -76,7 +76,7 @@ function installSkill(agent, dest) {
   writeFileSync(join(dest, 'scripts', 'install.json'), JSON.stringify({ version, agent }) + '\n')
   writeFileSync(
     join(dest, 'scripts', 'run.mjs'),
-    `#!/usr/bin/env node\nimport { launch } from '../runtime/src/cli/skill.mjs'\nawait launch('${agent}')\n`
+    `#!/usr/bin/env node\nimport { runCli } from '../runtime/src/cli/main.mjs'\nawait runCli(process.argv.slice(2), { defaultAgent: '${agent}' })\n`
   )
   console.log(`Installed ${agent}: ${dest}`)
 }

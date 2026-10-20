@@ -1,3 +1,3 @@
 #!/usr/bin/env node
-import { launch } from '../../../src/cli/skill.mjs'
-await launch()
+import { runCli } from '../../../src/cli/main.mjs'
+await runCli()

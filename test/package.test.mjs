@@ -41,7 +41,7 @@ test('packed CLI, portable skills, and complete cached review', { timeout: 60000
       join(dir, packed.filename),
     ])
     const cli = join(prefix, 'node_modules', 'kasanome', 'bin', 'kasanome.mjs')
-    assert.equal(run(process.execPath, [cli, '--version']).trim(), '0.3.1')
+    assert.equal(run(process.execPath, [cli, '--version']).trim(), '0.3.2')
     assert.match(run(process.execPath, [cli, '--help']), /--max-seams/)
     run(process.execPath, [cli, 'install', '--target', 'all'])
     for (const [target, parent] of [
