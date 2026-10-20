@@ -1,6 +1,6 @@
 {
   "name": "kasanome",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Review large diffs and stacked PRs by architectural layer, with verified findings, inline comments, and a guided dashboard. Works with Claude, Codex, and other agent CLIs.",
   "type": "module",
   "bin": {
@@ -32,8 +32,7 @@
     "check:dead-code": "bunx fallow dead-code --fail-on-issues",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check:architecture": "bunx fallow architecture --fail-on-issues",
-    "prepack": "npm run build"
+    "check:architecture": "bunx fallow architecture --fail-on-issues"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

@@ -4,6 +4,5 @@ node_modules/
 /kasanome/
 .env
 .env.*
-/dist/
 /.fallow/
 /.fallow-cache/

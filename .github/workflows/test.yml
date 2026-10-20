@@ -14,6 +14,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: git diff --exit-code -- dist/dashboard.js
       - run: bun run check:dead-code
       - run: bun run check:architecture
       - run: bun run format:check

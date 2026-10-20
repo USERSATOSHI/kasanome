@@ -128,7 +128,7 @@ bun run format:check
 npm test                    # Four existing smoke and regression checks
 ```
 
-The browser code is bundled with esbuild during installation from Git or a source checkout. Published package archives include the built dashboard. After changing browser code, run `bun run build` before rendering reports.
+The generated browser bundle is committed so GitHub installs can run without a build tool. CI rebuilds it and checks for drift. After changing browser code, run `bun run build` and commit the updated `dist/dashboard.js` alongside the source. Package archives also include this bundle.
 
 The source is organized by responsibility:
 
@@ -144,7 +144,7 @@ The source is organized by responsibility:
 | `scripts/`         | Dashboard build                                           |
 | `test/`            | Existing package, source, and location checks             |
 
-Fallow scans the CLI, browser, skill, build, and test entry points. Only the generated `dist/` bundle is excluded. Dead code and architecture checks gate CI; complexity findings remain visible in `bun run check` to guide refactoring.
+Fallow scans the CLI, browser, skill, build, and test entry points. Only the generated `dist/` bundle is excluded from analysis. Dead code and architecture checks gate CI; complexity findings remain visible in `bun run check` to guide refactoring.
 
 ## Updating from structural-review
 
