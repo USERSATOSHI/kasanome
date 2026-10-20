@@ -7,7 +7,7 @@ Review a large git diff or stacked PRs by architectural layer, using your existi
 Install from GitHub with Node.js 18+ and Git:
 
 ```sh
-npm install --global git+https://github.com/USERSATOSHI/kasanome.git
+npm install --global --install-links git+https://github.com/USERSATOSHI/kasanome.git
 kasanome --version
 ```
 
@@ -17,12 +17,12 @@ Or clone the source:
 git clone https://github.com/USERSATOSHI/kasanome.git
 cd kasanome
 npm install
-npm install --global .
+npm install --global --install-links .
 ```
 
 Agent execution uses the chosen CLI's existing login and quota; the tool does not call model APIs itself. Install and authenticate at least one supported agent CLI separately. `gh` is optional for reviewing diffs, required for PR lookup/attribution.
 
-To update a cloned install, run `git pull --ff-only`, then `npm install --global .`. For a direct Git install, repeat the install command. Reinstall skills with `--force` to update their bundled runtime.
+To update a cloned install, run `git pull --ff-only`, then `npm install --global --install-links .`. For a direct Git install, repeat the install command. Reinstall skills with `--force` to update their bundled runtime.
 
 ## Use from the terminal
 
