@@ -1,0 +1,43 @@
+{
+  "name": "kasanome",
+  "version": "0.3.0",
+  "description": "Review large diffs and stacked PRs by architectural layer, with verified findings, inline comments, and a guided dashboard. Works with Claude, Codex, and other agent CLIs.",
+  "type": "module",
+  "bin": {
+    "kasanome": "bin/kasanome.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/USERSATOSHI/kasanome.git"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "src/",
+    "dist/",
+    "skills/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepare": "node scripts/prepare.mjs",
+    "test": "node --test",
+    "check": "bunx fallow",
+    "check:dead-code": "bunx fallow dead-code --fail-on-issues",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:architecture": "bunx fallow architecture --fail-on-issues",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "fallow": "3.34.1",
+    "prettier": "3.9.10"
+  }
+}

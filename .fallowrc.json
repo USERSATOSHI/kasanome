@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": [
+    "bin/kasanome.mjs",
+    "src/dashboard/client/main.js",
+    "skills/kasanome/scripts/run.mjs",
+    "scripts/*.mjs",
+    "test/*.test.mjs"
+  ],
+  "ignorePatterns": ["dist/**"],
+  "rules": {
+    "unused-files": "error",
+    "unused-exports": "error",
+    "unresolved-imports": "error",
+    "circular-dependencies": "error"
+  }
+}

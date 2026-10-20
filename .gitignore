@@ -1,0 +1,9 @@
+node_modules/
+*.tgz
+.DS_Store
+/kasanome/
+.env
+.env.*
+/dist/
+/.fallow/
+/.fallow-cache/
