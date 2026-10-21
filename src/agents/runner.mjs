@@ -1,16 +1,34 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import {
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  openSync,
+  closeSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAdapter } from './adapters.mjs'
 import { validate, extractJson, strictSchema } from './structured.mjs'
 
-export function createRunner({ repo: repo, out: out, opt, log }) {
+export function createRunner({ repo: repo, out: out, opt, log, identity = '' }) {
   const agentName = opt.agent || 'claude'
-  const concurrency = Number(opt.concurrency || 4)
+  const concurrency = Number(opt.concurrency || 1)
   const timeoutMs = Number(opt.timeout || 30) * 60_000
   const adapter = createAdapter(opt)
+  const usage = {
+    calls: 0,
+    maxCalls: Number(opt.maxCalls ?? 4),
+    cacheHits: 0,
+    totalTokens: 0,
+    tokensKnown: true,
+    attempts: [],
+    skipped: [],
+  }
   let active = 0
   const queue = []
   async function limit(fn) {
@@ -32,13 +50,19 @@ export function createRunner({ repo: repo, out: out, opt, log }) {
     process.once('exit', dispose)
   }
 
-  function exec({ cmd, args, stdin, env }) {
+  function exec({ cmd, args, stdin, stdinFile, env }) {
     return new Promise((res, rej) => {
-      const p = spawn(cmd, args, {
-        cwd: repo,
-        env: { ...process.env, ...env },
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
+      const inputFd = stdinFile ? openSync(stdinFile, 'r') : null
+      let p
+      try {
+        p = spawn(cmd, args, {
+          cwd: repo,
+          env: { ...process.env, PWD: repo, ...env },
+          stdio: [inputFd ?? 'pipe', 'pipe', 'pipe'],
+        })
+      } finally {
+        if (inputFd !== null) closeSync(inputFd)
+      }
       let out = '',
         err = ''
       const timer = setTimeout(() => {
@@ -59,7 +83,10 @@ export function createRunner({ repo: repo, out: out, opt, log }) {
         clearTimeout(timer)
         code === 0 ? res(out) : rej(new Error(`${cmd} exited ${code}: ${err.slice(-2000)}`))
       })
-      p.stdin.end(stdin)
+      p.stdin?.on('error', (error) => {
+        if (error.code !== 'EPIPE') rej(error)
+      })
+      p.stdin?.end(stdin)
     })
   }
   async function agent(label, prompt, { schema } = {}) {
@@ -67,18 +94,27 @@ export function createRunner({ repo: repo, out: out, opt, log }) {
       ? `${prompt}\n\n---\nOUTPUT FORMAT: Your final answer must be ONLY one JSON object matching this JSON Schema, inside a single \`\`\`json fenced block. No prose after it.\n\`\`\`json\n${JSON.stringify(schema)}\n\`\`\``
       : prompt
     const key = createHash('sha256')
-      .update(`${agentName}|${opt.model || ''}|${full}`)
+      .update(`${identity}|${agentName}|${opt.model || ''}|${full}`)
       .digest('hex')
       .slice(0, 16)
     const cacheFile = join(cache, `${key}.json`)
     if (!opt.fresh && existsSync(cacheFile)) {
+      usage.cacheHits++
       log(`${label}: cached`)
       return JSON.parse(readFileSync(cacheFile, 'utf8'))
     }
 
     return limit(async () => {
       let attemptPrompt = full
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= Number(opt.retries ?? 0) + 1; attempt++) {
+        if (usage.calls >= usage.maxCalls) {
+          usage.skipped.push(label)
+          log(`${label}: skipped (call budget exhausted)`)
+          return null
+        }
+        usage.calls++
+        const record = { label, attempt, tokens: null, status: 'failed' }
+        usage.attempts.push(record)
         const id = `${key}-${attempt}`
         const promptFile = join(work, `${id}.prompt.md`)
         const outFile = join(work, `${id}.out.txt`)
@@ -96,8 +132,68 @@ export function createRunner({ repo: repo, out: out, opt, log }) {
         try {
           const spec = adapter({ prompt: attemptPrompt, promptFile, outFile, schemaFile })
           const stdout = await exec(spec)
+          let answer = stdout
+          if (agentName === 'codex') {
+            const events = stdout.split('\n').flatMap((line) => {
+              try {
+                return [JSON.parse(line)]
+              } catch {
+                return []
+              }
+            })
+            const totals = events
+              .filter((e) => e.type === 'turn.completed' && e.usage)
+              .map((e) => e.usage)
+            if (totals.length)
+              record.tokens = totals.reduce(
+                (n, u) => n + (u.input_tokens || 0) + (u.output_tokens || 0),
+                0
+              )
+          } else if (agentName === 'opencode') {
+            const events = stdout.split('\n').flatMap((line) => {
+              try {
+                return [JSON.parse(line)]
+              } catch {
+                return []
+              }
+            })
+            const texts = events.filter(
+              (e) => e.type === 'text' && typeof e.part?.text === 'string'
+            )
+            const lastId = texts.at(-1)?.part.messageID
+            answer = texts
+              .filter((e) => e.part.messageID === lastId)
+              .map((e) => e.part.text)
+              .join('\n')
+            const steps = events.filter((e) => e.type === 'step_finish' && e.part?.tokens)
+            if (steps.length)
+              record.tokens = steps.reduce(
+                (n, { part: { tokens: t } }) =>
+                  n +
+                  (t.input || 0) +
+                  (t.output || 0) +
+                  (t.reasoning || 0) +
+                  (t.cache?.read || 0) +
+                  (t.cache?.write || 0),
+                0
+              )
+            record.tokensComplete = steps.at(-1)?.part.reason === 'stop'
+          } else if (agentName === 'claude') {
+            const envelope = JSON.parse(stdout)
+            answer = envelope.result || ''
+            if (envelope.usage)
+              record.tokens = [
+                'input_tokens',
+                'output_tokens',
+                'cache_creation_input_tokens',
+                'cache_read_input_tokens',
+              ].reduce((n, k) => n + (envelope.usage[k] || 0), 0)
+          }
+          usage.tokensKnown =
+            usage.tokensKnown && record.tokens !== null && record.tokensComplete !== false
+          usage.totalTokens += record.tokens || 0
           const text = (
-            spec.outFile && existsSync(spec.outFile) ? readFileSync(spec.outFile, 'utf8') : stdout
+            spec.outFile && existsSync(spec.outFile) ? readFileSync(spec.outFile, 'utf8') : answer
           ).trim()
           let result = text
           if (schema) {
@@ -106,11 +202,13 @@ export function createRunner({ repo: repo, out: out, opt, log }) {
             if (err) throw new Error(`schema violation: ${err}`)
           }
           writeFileSync(cacheFile, JSON.stringify(result))
+          record.status = 'completed'
           log(`${label}: done`)
           return result
         } catch (e) {
           log(`${label}: attempt ${attempt} failed: ${e.message.split('\n')[0]}`)
-          if (attempt === 3) {
+          usage.tokensKnown = false
+          if (attempt === Number(opt.retries ?? 0) + 1) {
             log(`${label}: giving up`)
             return null
           }
@@ -124,5 +222,5 @@ export function createRunner({ repo: repo, out: out, opt, log }) {
     process.removeListener('exit', dispose)
   }
   initWorkDirs()
-  return { agent, dispose }
+  return { agent, dispose, usage, remaining: () => Math.max(0, usage.maxCalls - usage.calls) }
 }

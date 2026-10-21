@@ -15,7 +15,7 @@ export function createAdapter(opt) {
       args: [
         '-p',
         '--output-format',
-        'text',
+        'json',
         '--permission-mode',
         'default',
         '--allowedTools',
@@ -32,6 +32,7 @@ export function createAdapter(opt) {
       cmd: 'codex',
       args: [
         'exec',
+        '--json',
         '--sandbox',
         'read-only',
         '--skip-git-repo-check',
@@ -45,19 +46,20 @@ export function createAdapter(opt) {
       outFile,
     }),
     opencode: ({ promptFile }) => ({
-      // "plan" is opencode's built-in read-only agent. Prompt is attached as a file to avoid argv limits.
       cmd: 'opencode',
-      // Message must precede -f, which is variadic and would swallow it.
+      // Feed stdin directly: file attachments can require interactive access outside the repo.
+      // Keep flags before the message for OpenCode v2 compatibility.
       args: [
         'run',
-        'Follow the instructions in the attached file exactly. Your final message is the answer.',
+        ...(opt.opencodeStandalone ? ['--standalone'] : []),
         '--agent',
         'plan',
+        '--format',
+        'json',
         ...(opt.model ? ['-m', opt.model] : []),
-        '-f',
-        promptFile,
+        'Follow the instructions provided on standard input exactly. Your final message is the answer.',
       ],
-      stdin: '',
+      stdinFile: promptFile,
     }),
     custom: ({ prompt, promptFile, outFile, schemaFile }) => {
       if (!opt.agentCmd) throw new Error('--agent custom requires --agent-cmd')

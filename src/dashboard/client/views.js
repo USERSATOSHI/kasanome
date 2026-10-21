@@ -18,6 +18,32 @@ export function viewOverview() {
     ' | agent: ' +
     h(D.agent || '-') +
     '</div>' +
+    (D.usage
+      ? '<p class="muted">Agent calls: ' +
+        h(D.usage.calls) +
+        '/' +
+        h(D.usage.maxCalls) +
+        ' · cache hits: ' +
+        h(D.usage.cacheHits) +
+        ' · reported tokens: ' +
+        h(
+          D.usage.tokensKnown
+            ? D.usage.totalTokens
+            : 'unavailable (partial total: ' + D.usage.totalTokens + ')'
+        ) +
+        '</p>'
+      : '') +
+    (D.coverage
+      ? '<div class="card">' +
+        h(D.coverage.mode) +
+        ' · ' +
+        h(D.coverage.reason) +
+        '<br>Skipped: ' +
+        h(D.coverage.skipped.join(', ') || 'none') +
+        '<br>Verification: ' +
+        (D.coverage.verificationIncomplete ? 'incomplete' : 'complete') +
+        '. Coverage is limited to the selected scope; this is not approval.</div>'
+      : '') +
     '<div class="stats">' +
     '<div class="stat"><b>' +
     D.scope.filesChanged +

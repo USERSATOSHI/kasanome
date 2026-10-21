@@ -88,6 +88,14 @@ function unitHeader(u, l, sm, fs, reading, readCount) {
         '</div>'
       : '') +
     stats +
+    (u.reviewedCommit
+      ? '<p class="muted mono">Area assessment at commit ' +
+        h(u.reviewedCommit.slice(0, 12)) +
+        (D.source?.head && u.reviewedCommit !== D.source.head
+          ? ' · reused from an earlier run; see coverage for current checks'
+          : '') +
+        '</p>'
+      : '') +
     '</header>'
   )
 }

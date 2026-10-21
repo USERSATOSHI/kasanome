@@ -70,6 +70,11 @@ test('packed CLI, portable skills, and complete cached review', { timeout: 60000
     assert.equal(readFileSync(customFile, 'utf8'), 'keep')
     run('git', ['init', '-q', repo])
     writeFileSync(join(repo, 'example.js'), 'export const n = 1\n')
+    run('git', ['config', 'user.name', 'Test'], { cwd: repo })
+    run('git', ['config', 'user.email', 'test@example.invalid'], { cwd: repo })
+    run('git', ['add', '.'], { cwd: repo })
+    run('git', ['commit', '-qm', 'baseline'], { cwd: repo })
+    run('git', ['branch', '-f', 'main'], { cwd: repo })
     const agent = join(dir, 'fake-agent.mjs')
     const calls = join(dir, 'calls')
     writeFileSync(
@@ -92,6 +97,14 @@ else result = 'Shape: example reading guide'
 console.log(typeof result === 'string' ? result : JSON.stringify(result))
 `
     )
+    const ghBin = join(dir, 'gh-bin')
+    mkdirSync(ghBin)
+    writeFileSync(
+      join(ghBin, 'gh'),
+      '#!/bin/sh\nprintf \'%s\\n\' \'{"number":1,"title":"Example","headRefName":"HEAD","baseRefName":"main","additions":2000,"deletions":0,"url":""}\'\n',
+      { mode: 0o755 }
+    )
+    env.PATH = ghBin + ':' + env.PATH
     env.TEST_CALLS = calls
     // No model CLI or network is used: the custom agent returns controlled answers.
     const args = [
@@ -104,6 +117,9 @@ console.log(typeof result === 'string' ? result : JSON.stringify(result))
       'node "$TEST_AGENT"',
       '--base',
       'main',
+      '--guides',
+      '--max-calls',
+      '8',
     ]
     env.TEST_AGENT = agent
     run(process.execPath, args)
@@ -118,7 +134,7 @@ console.log(typeof result === 'string' ? result : JSON.stringify(result))
     assert.match(html, /Example system/)
     assert.match(html, /Finding 0/)
     const count = readFileSync(calls, 'utf8')
-    assert.equal(count.trim().split('\n').length, 6)
+    assert.equal(count.trim().split('\n').length, 5)
     run(process.execPath, args)
     assert.equal(readFileSync(calls, 'utf8'), count)
     run(process.execPath, [cli, '--repo', repo, '--render', join(out, 'data.json')])

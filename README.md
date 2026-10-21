@@ -39,7 +39,7 @@ kasanome --help
 
 Use `--repo /path/to/repo` to review a different directory. Claude is the CLI default. Pass `--model <id>` to select a model supported by your installed agent CLI.
 
-The output is `kasanome/index.html` plus `data.json` inside the reviewed repo. Open the HTML in a browser; it needs JavaScript and does not need a web server. The report directory is added to Git's local exclude file. Nothing is committed or posted by the runner.
+The output is `kasanome/index.html` plus `data.json` inside the reviewed repo. Open the HTML in a browser; it needs JavaScript and does not need a web server. The report directory is added to Git's local exclude file. Nothing is committed. Posting requires explicit `--publish <PR-number>`.
 
 ## Use from Claude Code or Codex
 
@@ -70,12 +70,12 @@ Skill discovery follows [Claude Code skills](https://code.claude.com/docs/en/ski
 
 ## What a review does
 
-1. Resolve `base...head`, diff stats, design docs, and optionally the PR stack.
-2. Infer architectural layers, their contracts, dependencies, and risky boundaries.
-3. Review each selected layer and boundary using agent CLI processes.
-4. Ask a skeptic to refute findings; retain the survivors.
-5. Attribute findings to the PR that introduced them and check for later fixes.
-6. Write reading guides for large PRs and render the dashboard.
+1. Pin base/head commits and collect scope with Git, without an agent call.
+2. Build an architectural map on the first run. Reuse it on descendant commits; refresh it for unmapped paths, dependency manifests, changed review policy/base, or diverged history.
+3. Review affected layers, direct consumers, and adjacent boundaries. Continue previously skipped units against the complete PR diff.
+4. Merge findings with the same file, category, normalized title, and source excerpt before one shared skeptical verification call. Preserve reviewer origins. Differently worded duplicates may remain separate.
+5. Keep stable finding IDs and commit-linked verification history. Recheck affected existing findings rather than treating them as new. Uncertain or deferred checks remain unverified; only explicit evidence of a fix resolves a known finding.
+6. Save state and render the dashboard. PR attribution and reading guides require `--guides`; GitHub publication requires `--publish <number>`.
 
 The dashboard has overview, architecture, layers, boundaries, PRs, findings, reading checkboxes, triage controls, filters, and light/dark mode.
 
@@ -98,13 +98,54 @@ This is a structural review, not exhaustive line-by-line coverage or automatic a
 
 All prompts instruct agents to read only. Tool permissions are not a universal OS sandbox: Claude's allowed Git/GitHub shell commands are broad, and custom commands are your responsibility. Inspect changes before running unfamiliar backends. The runner itself writes reports/cache and Git's local exclude file.
 
+For OpenCode v2, `--opencode-standalone` runs each call with a private server instead of the shared background service:
+
+```sh
+kasanome --agent opencode --opencode-standalone --model <provider/model> --base origin/main
+```
+
+The OpenCode adapter sends the prompt through stdin and reads structured JSON events. It sets the subprocess working directory and `PWD` to the reviewed repository. It does not restart the shared service. Token accounting remains partial when the CLI omits a final usage event.
+
 Custom commands receive the prompt on stdin, plus `KASANOME_PROMPT_FILE`, `KASANOME_OUT_FILE` (optional answer file), and `KASANOME_SCHEMA_FILE`. JSON output is parsed, validated, and retried up to twice after an invalid answer.
 
-## Resume and cost
+## Incremental reviews and usage
 
-Results are cached under `<out>/.cache`, keyed by agent, model, and prompt. Rerunning reuses matching results; `--fresh` ignores the cache. After code changes, use `--fresh` to avoid reusing results for unchanged branch names/prompts. Caches are not a substitute for checking the reviewed commit.
+Incremental review is the default. Start with your authenticated Codex CLI:
 
-A run takes roughly `2 + 2 × (layers + boundaries) + attribution + large PRs` agent calls. `--concurrency` defaults to four, and `--timeout` to 30 minutes per call. These calls consume your agent account's usage. Reduce scope with `--prs none`, `--max-seams`, or `--pr-guide-min`.
+```sh
+kasanome --agent codex --base main --prs none
+# Run the same command after fixes, or to continue skipped coverage.
+kasanome --agent codex --base main --prs none
+```
+
+**The first run has no reusable context.** It builds a map once and reviews only what fits the budget. The default hard cap is **four agent launches**, including retries: typically one map, two layer reviews, and one shared verification call. A small repository may need fewer calls. Later runs reuse the map and review affected areas or continue pending coverage. Once coverage is complete, repeating an unchanged review can use zero agent calls. Scope collection and dashboard rendering use no model calls.
+
+Defaults favor low usage: concurrency one, no automatic retries, no PR guides, at most twelve finding checks per run. Known findings in unaffected areas are retained without rechecking. Additional findings stay unverified for a later run. These settings reduce repeated work; **four calls can still consume substantial tokens** if the repository or agent tool reads are large.
+
+```sh
+# Two-call cap: map first, then continue bounded reviews on subsequent runs.
+kasanome --agent codex --base main --max-calls 2
+# Broader architectural audit, still bounded by an explicit call cap.
+kasanome --agent codex --base main --mode full --max-calls 20
+# Optional expensive extras; they share the same launch budget.
+kasanome --agent codex --base main --guides --max-calls 12
+```
+
+`--max-calls` limits launched CLI processes, including failed attempts and `--retries`. Cached answers consume no calls. It is not a hard token limit: the supported CLIs do not provide a uniform per-call token ceiling, so `--token-budget` is rejected instead of claiming enforcement. Codex and OpenCode JSON events and Claude JSON results provide reported token totals when available; unsupported or failed accounting is marked unavailable, with a partial total retained. Tokens are provider-reported usage, not subscription quota percentages or actual charges. No API billing is introduced.
+
+`data.json` and the dashboard show calls, cache hits, reported tokens, skipped units, and incomplete verification. Coverage is limited to mapped layers and boundaries; a green/empty report is not approval. The initial map uses changed-area summaries, and reviewer prompts bound attention to their paths and direct contracts; these are instructions, not an enforced tool-read or context-window limit.
+
+Durable history lives under `<out>/.state/`, keyed by repository, base ref, and head branch/ref. `<out>/state.json` mirrors the latest run for inspection. It records reviewed commits, the reusable map, pending coverage, stable finding IDs, verification history, and per-run usage. Use stable ref names across runs; switching branches preserves each branch's state. Renames or substantially reworded findings can receive a new identity. Browser triage remains localStorage data and is separate from verified finding resolution.
+
+Agent answers are cached under `<out>/.cache`, keyed by pinned commit IDs, backend, model, custom command, and prompt. Moving branch names no longer reuse answers for a different commit. `--fresh` ignores agent-answer caches; use `--mode full --fresh` to force a fresh architectural pass. Successful units and answers survive interruption, but an unfinished run does not advance durable state. One output directory is locked against concurrent reviews; after an abnormal termination, remove `.review.lock` only after confirming the previous run stopped.
+
+### Updating one PR summary
+
+```sh
+kasanome --agent codex --base main --publish 123
+```
+
+This explicitly authorizes creating/updating a single marked GitHub **summary comment**, rather than posting a new formal review or inline comments on every run. Rerun with `--publish 123` after fixes. It uses your authenticated `gh` account, updates only that account's marked comment, and checks that the PR head matches the reviewed commit. Other comments and reviews remain untouched. No publication happens without this flag. GitHub Enterprise publication is not yet supported.
 
 Rebuild a dashboard without invoking agents (from a Git repository):
 
@@ -112,7 +153,7 @@ Rebuild a dashboard without invoking agents (from a Git repository):
 kasanome --render kasanome/data.json
 ```
 
-Reports and caches contain code-related material; keep them local unless you intend to share them.
+Reports, state, and caches contain code-related material; keep them local unless you intend to share them.
 
 ## Development
 
@@ -125,7 +166,7 @@ bun run check               # Fallow: dead code, duplication, and complexity
 bun run check:dead-code     # Fail on dead code and unresolved imports
 bun run check:architecture  # Fail on import cycles and boundary violations
 bun run format:check
-npm test                    # Four existing smoke and regression checks
+npm test                    # Package, incremental-state, budget, and source regressions
 ```
 
 The generated browser bundle is committed so GitHub installs can run without a build tool. CI rebuilds it and checks for drift. After changing browser code, run `bun run build` and commit the updated `dist/dashboard.js` alongside the source. Package archives also include this bundle.

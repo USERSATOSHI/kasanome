@@ -27,6 +27,7 @@ export function findingCard(f) {
     h(f.title) +
     '</span>' +
     pr +
+    (f.lifecycle ? '<span class="pill">' + h(f.lifecycle) + '</span>' : '') +
     st +
     '</div>' +
     '<div style="margin:6px 0">' +

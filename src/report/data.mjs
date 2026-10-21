@@ -23,6 +23,9 @@ function buildData(raw, { repo: repo, agent: agentName }) {
     ),
     prGuides: raw.prGuides || [],
     failed: raw.failed || [],
+    coverage: raw.coverage,
+    usage: raw.usage,
+    findingHistory: raw.findingHistory,
     source,
   }
 }

@@ -5,23 +5,21 @@ export function createPrompts(opt) {
   const NO_WRITE =
     'Read-only task: do not modify files, commit, push, or post comments. Use git, gh (read commands), and file reads only.'
 
-  const prsInstruction =
-    !opt.prs || opt.prs === 'auto'
-      ? 'If gh is available and authenticated, find open PRs forming a chain from base to head: start from the PR whose headRef is the head branch, follow baseRef downwards until reaching base. If nothing matches or gh is unavailable, return prs: [].'
-      : opt.prs === 'none'
-        ? 'Skip PR detection; return prs: [].'
-        : `Use exactly these PR numbers: ${opt.prs} (gh pr view).`
-
-  const scopePrompt = () => `Resolve the review scope for this git repository. ${NO_WRITE}
-
-Base ref: ${opt.base || '(auto: the default branch, e.g. origin/HEAD -> origin/main, falling back to main/master)'}
-Head ref: ${opt.head || 'HEAD'}
-
-1. Resolve both refs. Use the three-dot range base...head.
-2. Collect files changed, additions, deletions (git diff --shortstat), main languages, and top-level directories by changed lines (git diff --numstat aggregated to the first 1-2 path segments; ignore lockfiles and generated files in the ranking).
-3. Find spec/design/architecture docs in the head tree (README, docs/, spec*, ARCHITECTURE*, ADRs).${opt.spec ? ` The user named: ${opt.spec}.` : ''}
-4. Stacked PRs: ${prsInstruction} Order bottom (nearest base) to top. Use "" for url if unknown.
-5. headIsCheckedOut: true if git rev-parse HEAD equals the resolved head commit.`
+  const knownFor = (paths) => {
+    const known = (opt.knownFindings || [])
+      .filter(
+        (f) =>
+          !['resolved', 'refuted'].includes(f.lifecycle) &&
+          paths.some(
+            (p) =>
+              f.file === p || f.file.startsWith(p.replace(/\*.*$/, '').replace(/\/$/, '') + '/')
+          )
+      )
+      .slice(0, Number(opt.maxFindings ?? 12))
+    return known.length
+      ? `Already tracked findings (do not rediscover or repeat these; the shared verifier rechecks them):\n${known.map((f) => `${f.id} ${f.file}:${f.line} ${f.title}`).join('\n')}`
+      : ''
+  }
 
   const mapPrompt = (
     scope,
@@ -35,10 +33,10 @@ ${ctx.spec}
 
 Review the FINAL state at head, not the history.
 1. Read the import/dependency graph of the changed source. Skim entry points and the most-imported modules.
-2. Group the changed code into 3-${maxLayers} layers ordered bottom-up by dependency (foundation/types/config/storage first, entry points last). Infer from how THIS codebase is wired, not a textbook template. Tests get their own layer only if large; otherwise describe them under "tests".
+2. Group the changed code into 1-${maxLayers} layers ordered bottom-up by dependency (foundation/types/config/storage first, entry points last). Infer from how THIS codebase is wired, not a textbook template. Tests get their own layer only if large; otherwise describe them under "tests".
 3. For each layer: purpose, paths, approximate changed lines, contracts other layers depend on (name + file), layers it depends on, back-edges.
 4. List the riskiest seams between layers (at most ${maxSeams + 2}) with files on both sides: where data shape, error semantics, or ownership changes hands.
-Every changed source path should belong to exactly one layer.`
+Every changed source path should belong to exactly one layer. Seam from/to must be existing layer IDs; omit seams for a single-layer repository.`
 
   const contractsOf = (map, ids) =>
     ids
@@ -59,11 +57,12 @@ This layer's purpose: ${l.purpose}
 Paths: ${l.paths.join(', ')}
 Its contracts: ${l.contracts.join('; ')}
 Known back-edges: ${l.backEdges.join('; ') || 'none'}
+${knownFor(l.paths)}
 Contracts of layers it depends on (treat as given, do not review them):
 ${contractsOf(map, l.dependsOn)}
 ${ctx.spec}${focus}
 Review the final code at head; use \`git diff ${ctx.range} -- <paths>\` to see what is new. Focus on new/changed code.
-Structure first, then correctness:
+Bound context to the named paths and contracts. Expand only to direct callers needed to prove an issue. Do not remap the repository.\nStructure first, then correctness:
 - One clear job? Contracts small, well-named, hard to misuse?
 - Leaky abstractions, layering violations, hidden coupling, global state.
 - Duplication (including reimplementing what a lower layer offers), dead code, speculative generality.
@@ -81,10 +80,11 @@ ${ctx.readHint}
 System overview: ${map.overview}
 Why this seam is risky: ${s.why}
 Files on both sides: ${s.files.join(', ')}
+${knownFor(s.files)}
 Contracts involved:
 ${contractsOf(map, [s.from, s.to])}
 ${focus}
-Do not review either layer internally. Only what crosses the boundary:
+Stay within the named files and contracts; expand only to direct callers needed to prove an issue. Do not review either layer internally. Only what crosses the boundary:
 - Type/shape drift between producer and consumer (optional vs required, units, ids, enums).
 - Error semantics: thrown vs returned, swallowed errors, retries on both sides, partial failure.
 - Ownership: who validates, logs, owns lifecycle/cleanup; double handling or nobody handling.
@@ -100,9 +100,9 @@ Report only issues with file and line on at least one side and a concrete conseq
   ) => `You are a skeptical senior reviewer. Try to REFUTE each finding below from a review of "${unitName}" in ${ctx.range}. ${NO_WRITE}
 ${ctx.readHint}
 
-Open the cited code and its callers/callees. Check that sourceExcerpt is verbatim from the cited file at head and the line number refers to that excerpt; do not treat a plausible line number as checked evidence. Mark real=false if the code does not say what the finding claims, the case is handled elsewhere, the consequence cannot happen in practice, it is pure style, or it is speculative. If uncertain, real=false. If real, correct the severity when over- or understated. Return one verdict per index.
+Open the cited code and its callers/callees. Check that sourceExcerpt is verbatim from the cited file at head and the line number refers to that excerpt; do not treat a plausible line number as checked evidence. Mark real=false if the code does not say what the finding claims, the case is handled elsewhere, the consequence cannot happen in practice, it is pure style, or it is speculative. If uncertain, real=false. If real, correct the severity when over- or understated. Return one verdict per index. Existing findings have an id and lifecycle below: do not rediscover them. For an existing finding, real=false does NOT prove a fix. Set resolution="resolved" only when you inspected the current code and confirmed the defect was removed or fixed; otherwise use resolution="unknown". Use resolution="present" when real=true. A missing excerpt, moved lines, or uncertainty requires unknown, not resolved.
 
-${findings.map((f, i) => `[${i}] (${f.severity}, ${f.category}) ${f.title}\n    ${f.file}:${f.line}\n    ${f.detail}\n    evidence: ${f.evidence}\n    source excerpt: ${f.sourceExcerpt || '(not provided in this older finding)'}`).join('\n\n')}`
+${findings.map((f, i) => `[${i}] (${f.severity}, ${f.category}) ${f.title}${f.id ? ` [existing ${f.id}, ${f.lifecycle}]` : ''}\n    ${f.file}:${f.line}\n    ${f.detail}\n    evidence: ${f.evidence}\n    additional reviewer evidence: ${JSON.stringify(f.supportingEvidence || [])}\n    source excerpt: ${f.sourceExcerpt || '(not provided in this older finding)'}`).join('\n\n')}`
 
   const attribPrompt = (
     prs,
@@ -143,7 +143,6 @@ Output Markdown, plain text, no emojis, under 80 lines, with sections:
 4. "Superseded later": code in this PR that a later PR rewrites or deletes, so the reviewer does not comment on it here. Check by diffing this PR head against later heads.
 5. "Findings to raise on this PR": ${mine.length ? mine.map((f) => `${f.id} ${f.file}:${f.line} ${f.title} [${f.status || 'unknown'}${f.fixedIn ? `, fixed in #${f.fixedIn}` : ''}]`).join('; ') : 'none attributed'}. Present-at-head ones as "raise"; fixed-later ones as "skip, fixed in #N".`
   return {
-    scopePrompt,
     mapPrompt,
     layerPrompt,
     seamPrompt,

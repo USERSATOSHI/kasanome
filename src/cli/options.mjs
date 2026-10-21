@@ -8,6 +8,12 @@ Range
   --prs <auto|none|N,N>   stacked PRs to map findings onto (default: auto via gh)
 
 Review
+  --mode <incremental|full> incremental by default; first run builds a baseline
+  --max-calls <n>         hard limit on agent launches including retries (default 4)
+  --max-findings <n>      maximum findings checked per run (default 12; rest stay unverified)
+  --retries <n>           retries per failed call (default 0; consume call budget)
+  --guides               opt in to PR attribution and reading-guide agent calls
+  --publish <PR-number>   create/update one GitHub summary comment (explicit opt-in)
   --focus <text>          what you care about most, e.g. "error handling, data model"
   --spec <paths>          comma-separated spec/design docs (default: auto-detect)
   --max-layers <n>        default 6
@@ -16,10 +22,11 @@ Review
 
 Agent
   --agent <name>          claude | codex | opencode | custom (default: claude)
+  --opencode-standalone  use a private server with OpenCode v2 instead of its shared service
   --agent-cmd <cmd>       for --agent custom: shell command; prompt on stdin, answer on stdout.
                           Env: KASANOME_PROMPT_FILE, KASANOME_OUT_FILE (optional answer file), KASANOME_SCHEMA_FILE
   --model <id>            model passed to the agent CLI
-  --concurrency <n>       parallel agents (default 4)
+  --concurrency <n>       parallel agents (default 1)
   --timeout <min>         per-agent timeout in minutes (default 30)
 
 Output
@@ -38,8 +45,8 @@ export function parseArgs(argv) {
       process.stdout.write(HELP)
       process.exit(0)
     }
-    if (a === '--fresh') {
-      o.fresh = true
+    if (['--fresh', '--guides', '--opencode-standalone'].includes(a)) {
+      o[a.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = true
       continue
     }
     if (!a.startsWith('--')) throw new Error(`Unexpected argument: ${a}`)
@@ -48,6 +55,12 @@ export function parseArgs(argv) {
     if (val === undefined || val.startsWith('--')) throw new Error(`Missing value for ${a}`)
     o[key] = val
   }
+  if (o.mode && !['incremental', 'full'].includes(o.mode))
+    throw new Error('--mode must be incremental or full')
+  if (o.tokenBudget !== undefined)
+    throw new Error(
+      'These agent CLIs cannot enforce a hard token budget. Use --max-calls to cap launches; reported tokens are shown when available.'
+    )
   validateNumbers(o)
   return o
 }
@@ -55,6 +68,10 @@ export function parseArgs(argv) {
 function validateNumbers(options) {
   for (const [key, min] of Object.entries({
     concurrency: 1,
+    maxCalls: 2,
+    retries: 0,
+    maxFindings: 1,
+    publish: 1,
     maxLayers: 1,
     maxSeams: 0,
     prGuideMin: 0,

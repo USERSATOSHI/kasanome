@@ -9,29 +9,6 @@ const obj = (props, required = Object.keys(props)) => ({
   required,
 })
 
-export const SCOPE_SCHEMA = obj({
-  base: str,
-  head: str,
-  headIsCheckedOut: bool,
-  filesChanged: num,
-  additions: num,
-  deletions: num,
-  languages: strs,
-  topDirs: S('array', { items: obj({ path: str, files: num, lines: num }) }),
-  specDocs: strs,
-  prs: S('array', {
-    items: obj({
-      number: num,
-      title: str,
-      headRef: str,
-      baseRef: str,
-      additions: num,
-      deletions: num,
-      url: str,
-    }),
-  }),
-})
-
 export const MAP_SCHEMA = obj({
   overview: S('string', { description: '1-2 paragraphs: what the system does and how data flows' }),
   layers: S('array', {
@@ -83,12 +60,16 @@ export const REVIEW_SCHEMA = obj({
 
 export const VERDICT_SCHEMA = obj({
   verdicts: S('array', {
-    items: obj({
-      index: num,
-      real: bool,
-      severity: S('string', { enum: ['high', 'medium', 'low'] }),
-      reason: str,
-    }),
+    items: obj(
+      {
+        index: num,
+        real: bool,
+        severity: S('string', { enum: ['high', 'medium', 'low'] }),
+        reason: str,
+        resolution: S('string', { enum: ['present', 'resolved', 'unknown'] }),
+      },
+      ['index', 'real', 'severity', 'reason']
+    ),
   }),
 })
 
