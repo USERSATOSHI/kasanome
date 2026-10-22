@@ -33,13 +33,47 @@ export function viewOverview() {
         ) +
         '</p>'
       : '') +
+    (D.usage?.tokenBreakdown
+      ? '<p class="muted">Cumulative OpenCode usage: new input ' +
+        h(D.usage.tokenBreakdown.input) +
+        ' · cached reads ' +
+        h(D.usage.tokenBreakdown.cacheRead) +
+        ' · cache writes ' +
+        h(D.usage.tokenBreakdown.cacheWrite) +
+        ' · output ' +
+        h(D.usage.tokenBreakdown.output) +
+        ' · reasoning ' +
+        h(D.usage.tokenBreakdown.reasoning) +
+        '. Totals accumulate across model steps; they are not the size of the diff or a subscription quota.</p>'
+      : '') +
     (D.coverage
       ? '<div class="card">' +
+        h(D.coverage.style || 'layered') +
+        ' · ' +
         h(D.coverage.mode) +
         ' · ' +
         h(D.coverage.reason) +
         '<br>Skipped: ' +
         h(D.coverage.skipped.join(', ') || 'none') +
+        (D.coverage.style === 'quick'
+          ? '<br>Quick context: ' +
+            h(D.coverage.contextChars) +
+            '/' +
+            h(D.coverage.maxContextChars) +
+            ' characters. Skipped files: ' +
+            h(
+              (D.coverage.skippedFiles || [])
+                .map((f) => f.path + ' (' + f.reason + ')')
+                .join(', ') || 'none'
+            ) +
+            '<br>Context limitations: ' +
+            h(
+              (D.coverage.contextLimitations || [])
+                .map((f) => f.path + ' (' + f.reason + ')')
+                .join(', ') || 'none'
+            ) +
+            '. Scope: supplied diff only; architecture and repository-wide behavior were not audited.'
+          : '') +
         '<br>Verification: ' +
         (D.coverage.verificationIncomplete ? 'incomplete' : 'complete') +
         '. Coverage is limited to the selected scope; this is not approval.</div>'

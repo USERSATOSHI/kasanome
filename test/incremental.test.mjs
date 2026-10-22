@@ -45,6 +45,8 @@ console.log(JSON.stringify(result))
       cli,
       '--repo',
       repo,
+      '--mode',
+      'incremental',
       '--base',
       'main',
       '--agent',

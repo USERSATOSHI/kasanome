@@ -4,11 +4,12 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 
 function git(repo, ...args) {
-  return execFileSync('git', args, {
+  const result = execFileSync('git', args, {
     cwd: repo,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim()
+  })
+  return args.includes('-z') ? result : result.trim()
 }
 
 export function pinScope(repo, opt) {
@@ -125,6 +126,13 @@ export function planReview(repo, scope, previous, opt) {
       const files = git(repo, 'diff', '--name-only', '-z', previous.headCommit, scope.headCommit)
         .split('\0')
         .filter(Boolean)
+      if (opt.reviewStyle === 'quick')
+        return {
+          incremental: true,
+          files,
+          range: previous.headCommit + '..' + scope.headCommit,
+          reason: 'new commits for a focused diff review',
+        }
       const unknown = files.some(
         (file) => !previous.map.layers.some((l) => l.paths.some((p) => matches(file, p)))
       )
@@ -158,7 +166,14 @@ export function planReview(repo, scope, previous, opt) {
 }
 
 export function policy(opt) {
-  return JSON.stringify([opt.focus || '', opt.spec || '', opt.maxLayers || 6, opt.maxSeams ?? 3])
+  return JSON.stringify([
+    opt.focus || '',
+    opt.spec || '',
+    opt.maxLayers || 6,
+    opt.maxSeams ?? 3,
+    opt.reviewStyle || 'layered',
+    ...(opt.reviewStyle === 'quick' ? [opt.quickMaxChars ?? 16000, opt.quickMaxFiles ?? 5] : []),
+  ])
 }
 
 function matches(file, path) {

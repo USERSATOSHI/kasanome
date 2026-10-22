@@ -14,6 +14,8 @@ function validateObject(schema, value, path) {
 
 function validateArray(schema, value, path) {
   if (!Array.isArray(value)) return `${path}: expected array`
+  if (schema.maxItems !== undefined && value.length > schema.maxItems)
+    return `${path}: exceeds ${schema.maxItems} items`
   if (!schema.items) return null
   for (let i = 0; i < value.length; i++) {
     const error = validate(schema.items, value[i], `${path}[${i}]`)
@@ -58,7 +60,7 @@ export function strictSchema(schema) {
       additionalProperties: false,
     }
   }
-  if (schema.type === 'array') return { type: 'array', items: strictSchema(schema.items) }
+  if (schema.type === 'array') return { ...schema, items: strictSchema(schema.items) }
   const result = { ...schema }
   delete result.description
   return result

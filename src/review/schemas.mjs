@@ -58,6 +58,8 @@ export const REVIEW_SCHEMA = obj({
   findings: S('array', { items: FINDING }),
 })
 
+export const QUICK_REVIEW_SCHEMA = obj({ findings: S('array', { items: FINDING, maxItems: 3 }) })
+
 export const VERDICT_SCHEMA = obj({
   verdicts: S('array', {
     items: obj(

@@ -29,7 +29,8 @@ test('packed CLI, portable skills, and complete cached review', { timeout: 60000
       run('npm', ['pack', '--json', '--pack-destination', dir], { cwd: root })
     )[0]
     assert.ok(packed.files.some((f) => f.path === 'skills/kasanome/SKILL.md'))
-    for (const file of ['LICENSE', 'NOTICE']) assert.ok(packed.files.some((f) => f.path === file))
+    for (const file of ['LICENSE', 'NOTICE', 'docs/usage.md', 'CONTRIBUTING.md'])
+      assert.ok(packed.files.some((f) => f.path === file))
     assert.ok(!packed.files.some((f) => /data\.json|\.cache|\.env/.test(f.path)))
     run('npm', [
       'install',
@@ -42,7 +43,7 @@ test('packed CLI, portable skills, and complete cached review', { timeout: 60000
     ])
     const cli = join(prefix, 'node_modules', 'kasanome', 'bin', 'kasanome.mjs')
     assert.equal(run(process.execPath, [cli, '--version']).trim(), '0.3.2')
-    assert.match(run(process.execPath, [cli, '--help']), /--max-seams/)
+    assert.match(run(process.execPath, [cli, '--help-all']), /--max-seams/)
     run(process.execPath, [cli, 'install', '--target', 'all'])
     for (const [target, parent] of [
       ['claude', '.claude'],
@@ -111,6 +112,8 @@ console.log(typeof result === 'string' ? result : JSON.stringify(result))
       cli,
       '--repo',
       repo,
+      '--mode',
+      'incremental',
       '--agent',
       'custom',
       '--agent-cmd',

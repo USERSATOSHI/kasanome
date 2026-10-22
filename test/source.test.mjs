@@ -225,3 +225,37 @@ test('finding locations use exact source evidence rather than an approximate age
   ])
   assert.equal(kept.anchor.line, 10)
 })
+
+test('overview distinguishes cumulative cached input from new input and partial totals', () => {
+  const data = {
+    range: 'main...HEAD',
+    repo: '/fixture',
+    scope: { prs: [], filesChanged: 1, additions: 1, deletions: 1 },
+    map: { overview: 'Fixture', layers: [], seams: [] },
+    layers: [],
+    seams: [],
+    units: [],
+    findings: [],
+    usage: {
+      calls: 3,
+      maxCalls: 4,
+      cacheHits: 0,
+      totalTokens: 107354,
+      tokensKnown: false,
+      tokenBreakdown: {
+        input: 22071,
+        cacheRead: 76416,
+        cacheWrite: 0,
+        output: 4088,
+        reasoning: 4779,
+      },
+    },
+    source: { files: [] },
+  }
+  const c = client(data)
+  c.navigate('#/')
+  assert.match(c.main.innerHTML, /partial total: 107354/)
+  assert.match(c.main.innerHTML, /new input 22071/)
+  assert.match(c.main.innerHTML, /cached reads 76416/)
+  assert.match(c.main.innerHTML, /not the size of the diff/)
+})

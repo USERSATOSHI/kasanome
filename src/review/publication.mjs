@@ -24,7 +24,15 @@ export function publishSummary(repo, pr, state) {
     String(text)
       .replace(/[\r\n]/g, ' ')
       .replace(/</g, '&lt;')
-  const body = `${marker}\n## Kasanome review\n\nCommit: ${state.headCommit}\n\nCoverage: ${state.coverage.complete ? 'selected scope complete' : 'partial; not approval'}. Skipped: ${state.coverage.skipped.join(', ') || 'none'}. Verification incomplete: ${state.coverage.verificationIncomplete}.\n\nAgent calls: ${state.usage.calls}/${state.usage.maxCalls}. Reported tokens: ${state.usage.tokensKnown ? state.usage.totalTokens : 'unavailable'}.\n\n${active.map((f) => `- **${f.id} [${f.severity}; ${f.lifecycle}]** ${clean(f.title)} — ${clean(f.file)}:${f.line}\n  ${clean(f.detail)}`).join('\n') || 'No active findings. This does not constitute approval.'}\n\nResolved findings: ${state.findings.filter((f) => f.lifecycle === 'resolved').length}.`
+  const breakdown = state.usage.tokenBreakdown
+  const usageDetail = breakdown
+    ? ` Cumulative categories: new input ${breakdown.input}, cached reads ${breakdown.cacheRead}, cache writes ${breakdown.cacheWrite}, output ${breakdown.output}, reasoning ${breakdown.reasoning}.`
+    : ''
+  const scopeDetail =
+    state.coverage.style === 'quick'
+      ? ` Quick mode reviews supplied diffs, not repository architecture. Skipped files: ${(state.coverage.skippedFiles || []).map((f) => clean(f.path) + ' (' + clean(f.reason) + ')').join(', ') || 'none'}.`
+      : ''
+  const body = `${marker}\n## Kasanome review\n\nCommit: ${state.headCommit}\n\nCoverage: ${state.coverage.complete ? 'selected scope complete' : 'partial; not approval'}. Skipped: ${state.coverage.skipped.join(', ') || 'none'}. Verification incomplete: ${state.coverage.verificationIncomplete}.${scopeDetail}\n\nAgent calls: ${state.usage.calls}/${state.usage.maxCalls}. Reported tokens: ${state.usage.tokensKnown ? state.usage.totalTokens : 'unavailable'}.${usageDetail}\n\n${active.map((f) => `- **${f.id} [${f.severity}; ${f.lifecycle}]** ${clean(f.title)} — ${clean(f.file)}:${f.line}\n  ${clean(f.detail)}`).join('\n') || 'No active findings. This does not constitute approval.'}\n\nResolved findings: ${state.findings.filter((f) => f.lifecycle === 'resolved').length}.`
   const endpoint = existing.length ? `repos/${match[1]}/issues/comments/${existing[0].id}` : path
   const result = JSON.parse(
     execFileSync(

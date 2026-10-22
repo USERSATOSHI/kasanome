@@ -3,9 +3,16 @@ import { readFileSync, openSync, closeSync, unlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createRunner } from '../agents/runner.mjs'
 import { createPrompts } from './prompts.mjs'
-import { MAP_SCHEMA, REVIEW_SCHEMA, VERDICT_SCHEMA, ATTRIB_SCHEMA } from './schemas.mjs'
+import {
+  MAP_SCHEMA,
+  REVIEW_SCHEMA,
+  QUICK_REVIEW_SCHEMA,
+  VERDICT_SCHEMA,
+  ATTRIB_SCHEMA,
+} from './schemas.mjs'
 import { writeDashboard } from '../report/data.mjs'
 import { prepareOutput } from '../report/output.mjs'
+import { summarizeReport, formatSummary } from '../report/terminal.mjs'
 
 import {
   pinScope,
@@ -17,6 +24,7 @@ import {
   policy,
 } from './state.mjs'
 import { publishSummary } from './publication.mjs'
+import { reviewStyle, prepareQuick, quickPrompt, quickVerifyPrompt } from './quick.mjs'
 
 function reviewContext(scope) {
   return {
@@ -64,8 +72,19 @@ function selectUnits(map, opt, prompts, context, log) {
 }
 
 async function reviewUnit(unit, agent) {
-  const review = await agent(`review:${unit.id}`, unit.prompt, { schema: REVIEW_SCHEMA })
-  return { ...unit, review, findings: [] }
+  const review = await agent(`review:${unit.id}`, unit.prompt, {
+    schema: unit.quick ? QUICK_REVIEW_SCHEMA : REVIEW_SCHEMA,
+  })
+  return {
+    ...unit,
+    review: review && {
+      summary: 'Focused review of supplied Git context.',
+      readingOrder: [],
+      strengths: [],
+      ...review,
+    },
+    findings: [],
+  }
 }
 
 async function attributeFindings(scope, findings, agent, prompts) {
@@ -136,11 +155,16 @@ function collectPrs(repo, scope, opt, log) {
 
 async function review(opt, reportOptions, log) {
   const scope = pinScope(reportOptions.repo, opt)
-  if ((opt.guides || opt.publish) && opt.prs !== 'none')
+  opt = { ...opt, reviewStyle: reviewStyle(scope, opt) }
+  const isQuick = opt.reviewStyle === 'quick'
+  if (opt.prInfo && !opt.guides) scope.prs = [opt.prInfo]
+  else if ((opt.guides || opt.publish) && opt.prs !== 'none')
     scope.prs = collectPrs(reportOptions.repo, scope, opt, log)
   const previous = loadState(reportOptions.out, { ...scope, repo: reportOptions.repo })
   const plan = planReview(reportOptions.repo, scope, previous, opt)
-  log(`${plan.incremental ? 'incremental' : 'baseline'} review: ${plan.reason}`)
+  log(
+    `${isQuick ? 'quick' : 'layered'} ${plan.incremental ? 'incremental' : 'baseline'} review: ${plan.reason}`
+  )
   const runner = createRunner({
     ...reportOptions,
     opt,
@@ -151,14 +175,36 @@ async function review(opt, reportOptions, log) {
   const prompts = createPrompts({ ...opt, knownFindings: previous?.findings || [] })
   try {
     const context = { ...reviewContext(scope), range: plan.range }
-    const map = plan.incremental
-      ? previous.map
-      : await agent('map', prompts.mapPrompt(scope, context), { schema: MAP_SCHEMA })
+    const quick = isQuick ? prepareQuick(reportOptions.repo, scope, plan, previous, opt) : null
+    const map = quick
+      ? quick.map
+      : plan.incremental
+        ? previous.map
+        : await agent('map', prompts.mapPrompt(scope, context), { schema: MAP_SCHEMA })
     if (!map) throw new Error('Map failed or call budget exhausted; no review state was advanced')
-    const selected = selectUnits(map, opt, prompts, context, log)
+    const selected = quick
+      ? {
+          layers: map.layers,
+          units: [
+            {
+              kind: 'layer',
+              id: 'quick-diff',
+              name: 'Focused diff review',
+              quick: true,
+              prompt: quickPrompt(
+                quick,
+                (previous?.findings || [])
+                  .filter((f) => !['resolved', 'refuted'].includes(f.lifecycle))
+                  .slice(0, 3),
+                opt
+              ),
+            },
+          ],
+        }
+      : selectUnits(map, opt, prompts, context, log)
     const affected = affectedUnits(map, plan, previous)
     for (const unit of selected.units) {
-      if (plan.incremental && previous.pending.includes(unit.id)) {
+      if (!quick && plan.incremental && previous.pending.includes(unit.id)) {
         const fullContext = { ...context, range: `${scope.baseCommit}...${scope.headCommit}` }
         if (unit.kind === 'layer')
           unit.prompt = prompts.layerPrompt(
@@ -174,9 +220,13 @@ async function review(opt, reportOptions, log) {
           )
       }
     }
-    const candidates = selected.units.filter((u) => !affected || affected.has(u.id))
-    // Reserve one call for verification. Queued work also checks the budget before launching.
-    const available = Math.max(0, runner.remaining() - 1)
+    const candidates = quick
+      ? quick.included.length
+        ? selected.units
+        : []
+      : selected.units.filter((u) => !affected || affected.has(u.id))
+    // Layered reviews reserve verification; a one-call quick run can save findings for a later check.
+    const available = Math.max(0, runner.remaining() - (quick ? 0 : 1))
     const scheduled = candidates.slice(0, available)
     const units = await Promise.all(scheduled.map((unit) => reviewUnit(unit, agent)))
     const skipped = candidates.slice(available).map((u) => u.id)
@@ -202,11 +252,13 @@ async function review(opt, reportOptions, log) {
     )
     const needsCheck = eligible
       .sort((a, b) => Number(b.lifecycle === 'unverified') - Number(a.lifecycle === 'unverified'))
-      .slice(0, Number(opt.maxFindings ?? 12))
+      .slice(0, Math.min(quick ? 3 : Infinity, Number(opt.maxFindings ?? 12)))
     const verification = needsCheck.length
       ? await agent(
           'verify:merged',
-          prompts.verifyPrompt('all affected layers and known findings', needsCheck, context),
+          quick
+            ? quickVerifyPrompt(quick, needsCheck)
+            : prompts.verifyPrompt('all affected layers and known findings', needsCheck, context),
           { schema: VERDICT_SCHEMA }
         )
       : null
@@ -275,9 +327,37 @@ async function review(opt, reportOptions, log) {
       needsCheck.some(
         (_, i) => (verification?.verdicts || []).filter((v) => v.index === i).length !== 1
       )
-    const pending = [...new Set([...skipped, ...failed, ...omitted])]
+    const pendingFiles = quick
+      ? [
+          ...new Set([
+            ...quick.skipped.map((f) => f.path),
+            ...(failed.length ? quick.included : []),
+          ]),
+        ]
+      : []
+    const pending = [
+      ...new Set([
+        ...skipped,
+        ...failed,
+        ...omitted,
+        ...(pendingFiles.length ? ['quick-diff'] : []),
+      ]),
+    ]
     const coverage = {
       mode: plan.incremental ? 'incremental' : 'baseline',
+      style: opt.reviewStyle,
+      ...(quick
+        ? {
+            scope: 'diff-only',
+            reviewedFiles: units.some((u) => u.review) ? quick.included : [],
+            skippedFiles: quick.skipped,
+            contextFiles: quick.contextFiles,
+            contextLimitations: quick.limitations,
+            contextChars: quick.chars,
+            maxContextChars: quick.maxChars,
+            unavailableEvidence: quick.unavailable,
+          }
+        : {}),
       reason: plan.reason,
       range: plan.range,
       reviewed: units.filter((u) => u.review).map((u) => u.id),
@@ -301,6 +381,8 @@ async function review(opt, reportOptions, log) {
       headRef: scope.headRef,
       baseRef: scope.base,
       policy: policy(opt),
+      reviewStyle: opt.reviewStyle,
+      ...(quick ? { quick: { pendingFiles } } : {}),
       map,
       findings: records,
       units: reportUnits,
@@ -353,11 +435,17 @@ export async function runReview(opt) {
   const options = { repo, out, agent: opt.agent || 'claude' }
   prepareOutput(repo, out)
   if (opt.render) {
-    console.log(writeDashboard(JSON.parse(readFileSync(resolve(opt.render), 'utf8')), options))
+    const file = writeDashboard(JSON.parse(readFileSync(resolve(opt.render), 'utf8')), options)
+    const summary = summarizeReport(
+      JSON.parse(readFileSync(resolve(out, 'data.json'), 'utf8')),
+      file
+    )
+    console.log(opt.json ? JSON.stringify(summary) : file)
     return
   }
   const started = Date.now()
   const log = (message) =>
+    !opt.quiet &&
     process.stderr.write(`[${Math.round((Date.now() - started) / 1000)}s] ${message}\n`)
   const lockPath = resolve(out, '.review.lock')
   let lock
@@ -369,7 +457,13 @@ export async function runReview(opt) {
     )
   }
   try {
-    console.log(await review(opt, options, log))
+    const file = await review(opt, options, log)
+    const summary = summarizeReport(
+      JSON.parse(readFileSync(resolve(out, 'data.json'), 'utf8')),
+      file
+    )
+    if (!opt.quiet && !opt.json) process.stderr.write('\n' + formatSummary(summary) + '\n')
+    console.log(opt.json ? JSON.stringify(summary) : file)
   } finally {
     closeSync(lock)
     unlinkSync(lockPath)

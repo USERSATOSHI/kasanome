@@ -34,18 +34,21 @@ test('Codex, Claude, and OpenCode usage envelopes are counted without invoking p
     out + '/fixture.mjs',
     `
 import { readFileSync, writeFileSync, fstatSync } from 'node:fs'
-readFileSync(0, 'utf8')
-if (process.env.PWD !== process.cwd()) throw new Error('PWD differs from review repository')
 const args = process.argv.slice(2)
-if (args.includes('exec')) {
+if (!args.includes('export')) readFileSync(0, 'utf8')
+if (process.env.PWD !== process.cwd()) throw new Error('PWD differs from review repository')
+if (args.includes('export')) {
+ if (process.env.OPENCODE_EXPORT_FAIL) process.exit(1)
+ console.log(JSON.stringify({ info: { tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 30, write: 40 } } } }))
+} else if (args.includes('exec')) {
  writeFileSync(args[args.indexOf('-o') + 1], 'answer')
  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 50, output_tokens: 20 } }))
 } else if (args.includes('run')) {
  if (!fstatSync(0).isFile()) throw new Error('OpenCode requires prompt-file stdin')
  if (!args.includes('--standalone') || args.indexOf('-m') > args.length - 2 || args.includes('-f')) throw new Error('Unexpected OpenCode arguments')
- console.log(JSON.stringify({ type: 'text', part: { messageID: 'old', text: 'interim text' } }))
- console.log(JSON.stringify({ type: 'text', part: { messageID: 'final', text: 'answer' } }))
- console.log(JSON.stringify({ type: 'step_finish', part: { reason: 'stop', tokens: { input: 10, output: 20, reasoning: 5, cache: { read: 30, write: 40 } } } }))
+ console.log(JSON.stringify({ sessionID: 'session-test', type: 'text', part: { messageID: 'old', text: 'interim text' } }))
+ console.log(JSON.stringify({ sessionID: 'session-test', type: 'text', part: { messageID: 'final', text: 'answer' } }))
+ console.log(JSON.stringify({ type: 'step_finish', part: { reason: process.env.OPENCODE_FINAL_STOP ? 'stop' : 'tool-calls', tokens: { input: 10, output: 20, reasoning: 5, cache: { read: 30, write: 40 } } } }))
 } else console.log(JSON.stringify({ result: 'answer', usage: { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 30, cache_creation_input_tokens: 40 } }))
 `
   )
@@ -66,15 +69,48 @@ if (args.includes('exec')) {
         assert.equal(await runner.agent('test', 'Return answer'), 'answer')
         assert.equal(
           runner.usage.totalTokens,
-          agent === 'codex' ? 120 : agent === 'opencode' ? 105 : 100
+          agent === 'codex' ? 120 : agent === 'opencode' ? 195 : 100
         )
         assert.equal(runner.usage.tokensKnown, true)
+        if (agent === 'opencode') {
+          assert.equal(runner.usage.attempts[0].usageSource, 'session-export')
+          assert.equal(runner.usage.tokenBreakdown.cacheRead, 30)
+          assert.equal(runner.usage.tokenBreakdown.input, 100)
+        }
         assert.equal(await runner.agent('test', 'Return answer'), 'answer')
         assert.equal(runner.usage.calls, 1)
         assert.equal(runner.usage.cacheHits, 1)
       } finally {
         runner.dispose()
       }
+    }
+    const previousFail = process.env.OPENCODE_EXPORT_FAIL
+    const previousStop = process.env.OPENCODE_FINAL_STOP
+    try {
+      process.env.OPENCODE_EXPORT_FAIL = '1'
+      for (const complete of [false, true]) {
+        if (complete) process.env.OPENCODE_FINAL_STOP = '1'
+        const runner = createRunner({
+          repo: out,
+          out,
+          opt: { agent: 'opencode', model: 'test/free', opencodeStandalone: true, fresh: true },
+          log: () => {},
+        })
+        try {
+          assert.equal(await runner.agent('fallback', 'Return answer'), 'answer')
+          assert.equal(runner.usage.totalTokens, 105)
+          assert.equal(runner.usage.tokensKnown, complete)
+          assert.equal(runner.usage.attempts[0].usageSource, 'event-stream')
+          assert.equal(runner.usage.calls, 1)
+        } finally {
+          runner.dispose()
+        }
+      }
+    } finally {
+      if (previousFail === undefined) delete process.env.OPENCODE_EXPORT_FAIL
+      else process.env.OPENCODE_EXPORT_FAIL = previousFail
+      if (previousStop === undefined) delete process.env.OPENCODE_FINAL_STOP
+      else process.env.OPENCODE_FINAL_STOP = previousStop
     }
   } finally {
     process.env.PATH = originalPath

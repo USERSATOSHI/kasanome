@@ -22,7 +22,9 @@
     "skills/",
     "README.md",
     "LICENSE",
-    "NOTICE"
+    "NOTICE",
+    "docs/",
+    "CONTRIBUTING.md"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",

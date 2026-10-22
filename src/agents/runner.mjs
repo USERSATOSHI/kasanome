@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   mkdirSync,
@@ -14,6 +14,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAdapter } from './adapters.mjs'
 import { validate, extractJson, strictSchema } from './structured.mjs'
+
+function opencodeBreakdown(tokens) {
+  if (!tokens || typeof tokens.input !== 'number' || typeof tokens.output !== 'number') return null
+  const result = {
+    input: tokens.input,
+    output: tokens.output,
+    reasoning: tokens.reasoning ?? 0,
+    cacheRead: tokens.cache?.read ?? 0,
+    cacheWrite: tokens.cache?.write ?? 0,
+  }
+  return Object.values(result).every((n) => Number.isFinite(n) && n >= 0) ? result : null
+}
+
+function tokenTotal(breakdown) {
+  return Object.values(breakdown).reduce((sum, value) => sum + value, 0)
+}
 
 export function createRunner({ repo: repo, out: out, opt, log, identity = '' }) {
   const agentName = opt.agent || 'claude'
@@ -48,6 +64,34 @@ export function createRunner({ repo: repo, out: out, opt, log, identity = '' }) 
     mkdirSync(cache, { recursive: true })
     work = mkdtempSync(join(tmpdir(), 'kasanome-'))
     process.once('exit', dispose)
+  }
+
+  // OpenCode does not emit a final step_finish event, so the stream total omits the
+  // answer step. Ask the CLI for the completed session totals instead. This is a
+  // local process, not another model call.
+  function opencodeSessionTokens(sessionID) {
+    if (!sessionID) return null
+    try {
+      const args = [
+        'session',
+        'export',
+        ...(opt.opencodeStandalone ? ['--standalone'] : []),
+        sessionID,
+      ]
+      const raw = execFileSync('opencode', args, {
+        cwd: repo,
+        env: { ...process.env, PWD: repo },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 30_000,
+        maxBuffer: 64 * 1024 * 1024,
+      })
+      const info = JSON.parse(raw).info
+      if (info?.id && info.id !== sessionID) return null
+      return opencodeBreakdown(info?.tokens)
+    } catch {
+      return null
+    }
   }
 
   function exec({ cmd, args, stdin, stdinFile, env }) {
@@ -165,19 +209,39 @@ export function createRunner({ repo: repo, out: out, opt, log, identity = '' }) 
               .filter((e) => e.part.messageID === lastId)
               .map((e) => e.part.text)
               .join('\n')
-            const steps = events.filter((e) => e.type === 'step_finish' && e.part?.tokens)
-            if (steps.length)
-              record.tokens = steps.reduce(
-                (n, { part: { tokens: t } }) =>
-                  n +
-                  (t.input || 0) +
-                  (t.output || 0) +
-                  (t.reasoning || 0) +
-                  (t.cache?.read || 0) +
-                  (t.cache?.write || 0),
-                0
+            const steps = events.filter((e) => e.type === 'step_finish')
+            const streamed = steps.map((e) => opencodeBreakdown(e.part?.tokens))
+            const valid = streamed.filter(Boolean)
+            if (valid.length) {
+              record.tokenBreakdown = Object.fromEntries(
+                Object.keys(valid[0]).map((key) => [key, valid.reduce((sum, t) => sum + t[key], 0)])
               )
-            record.tokensComplete = steps.at(-1)?.part.reason === 'stop'
+              record.tokens = tokenTotal(record.tokenBreakdown)
+            }
+            record.tokensComplete =
+              steps.at(-1)?.part?.reason === 'stop' &&
+              valid.length === streamed.length &&
+              valid.length > 0
+            const sessionID = events.find((e) => e.sessionID)?.sessionID
+            if (sessionID) record.sessionID = sessionID
+            const completed = record.tokensComplete ? null : opencodeSessionTokens(sessionID)
+            if (completed) {
+              record.tokenBreakdown = completed
+              record.tokens = tokenTotal(completed)
+              record.tokensComplete = true
+              record.usageSource = 'session-export'
+            } else record.usageSource = 'event-stream'
+            if (record.tokenBreakdown) {
+              usage.tokenBreakdown ||= {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+              }
+              for (const [key, value] of Object.entries(record.tokenBreakdown))
+                usage.tokenBreakdown[key] += value
+            }
           } else if (agentName === 'claude') {
             const envelope = JSON.parse(stdout)
             answer = envelope.result || ''
