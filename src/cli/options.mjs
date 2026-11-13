@@ -1,6 +1,7 @@
 const HELP = `Kasanome — code review that remembers what you reviewed.
 
 Usage: kasanome review [options]
+       kasanome scan [--base <ref>] [--scanners <names>] [--json]
        kasanome status [--repo <dir>] [--out <dir>] [--json]
        kasanome install --target <claude|codex|all> [--force]
        kasanome [options]                 shorthand for review
@@ -21,6 +22,9 @@ Review
   --max-calls <n>        hard cap on agent launches, including retries (default: 4)
   --focus <text>         prioritize an area, e.g. "recovery and error handling"
   --publish <PR-number>  create/update one GitHub summary comment; explicit opt-in
+  --scanners <names>     auto | none | comma-separated tools (review default: none)
+  --sarif <paths>        import comma-separated SARIF 2.1.0 reports as candidates
+  --offline             skip scanners that need network access
 
 Results
   --repo <dir>           review another checkout (default: current repository)
@@ -37,6 +41,8 @@ A call cap limits launches, not tokens. Open kasanome/index.html to read the rep
 `
 const ADVANCED = `
 Advanced review options
+  --scanner-timeout <s>  timeout per scanner (default: 120 seconds)
+  --semgrep-config <id>  Semgrep rules/config (default: p/security-audit)
   --prs <auto|none|N,N>   PR metadata for optional guides (default: auto)
   --guides               opt in to PR attribution and reading guides
   --spec <paths>         comma-separated design/spec documents
@@ -80,8 +86,12 @@ const VALUES = new Set([
   'retries',
   'quick-max-chars',
   'quick-max-files',
+  'scanners',
+  'sarif',
+  'scanner-timeout',
+  'semgrep-config',
 ])
-const FLAGS = new Set(['fresh', 'guides', 'opencode-standalone', 'json', 'quiet'])
+const FLAGS = new Set(['fresh', 'guides', 'opencode-standalone', 'json', 'quiet', 'offline'])
 const ALIASES = {
   '-b': '--base',
   '-a': '--agent',
@@ -150,6 +160,7 @@ function validateNumbers(options) {
     maxSeams: 0,
     prGuideMin: 0,
     timeout: 0.001,
+    scannerTimeout: 1,
   })) {
     if (options[key] === undefined) continue
     const value = Number(options[key])

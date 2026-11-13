@@ -25,6 +25,7 @@ import {
 } from './state.mjs'
 import { publishSummary } from './publication.mjs'
 import { reviewStyle, prepareQuick, quickPrompt, quickVerifyPrompt } from './quick.mjs'
+import { runScanners, writeScan } from '../scanners/run.mjs'
 
 function reviewContext(scope) {
   return {
@@ -174,6 +175,10 @@ async function review(opt, reportOptions, log) {
   const { agent } = runner
   const prompts = createPrompts({ ...opt, knownFindings: previous?.findings || [] })
   try {
+    const scan = await runScanners(reportOptions.repo, scope, opt, log)
+    if (scan) writeScan(reportOptions.out, scan)
+    const unchangedScan =
+      scan && plan.incremental && !plan.files.length && previous?.scan?.identity === scan.identity
     const context = { ...reviewContext(scope), range: plan.range }
     const quick = isQuick ? prepareQuick(reportOptions.repo, scope, plan, previous, opt) : null
     const map = quick
@@ -226,7 +231,10 @@ async function review(opt, reportOptions, log) {
         : []
       : selected.units.filter((u) => !affected || affected.has(u.id))
     // Layered reviews reserve verification; a one-call quick run can save findings for a later check.
-    const available = Math.max(0, runner.remaining() - (quick ? 0 : 1))
+    const scannerCheckPending =
+      (scan?.candidates.length && !unchangedScan) ||
+      previous?.findings.some((f) => f.category === 'scanner' && f.lifecycle === 'unverified')
+    const available = Math.max(0, runner.remaining() - (quick && !scannerCheckPending ? 0 : 1))
     const scheduled = candidates.slice(0, available)
     const units = await Promise.all(scheduled.map((unit) => reviewUnit(unit, agent)))
     const skipped = candidates.slice(available).map((u) => u.id)
@@ -241,6 +249,8 @@ async function review(opt, reportOptions, log) {
     const raw = units.flatMap((u) =>
       (u.review?.findings || []).map((f) => ({ ...f, unit: u.name, unitId: u.id }))
     )
+    // A stable scan on an unchanged, already checked snapshot needs no model recheck.
+    if (scan && !unchangedScan) raw.push(...scan.candidates)
     const merged = mergeFindings([...known, ...raw])
     const rawKeys = new Set(mergeFindings(raw).map((f) => f.fingerprint))
     const eligible = merged.filter(
@@ -256,7 +266,7 @@ async function review(opt, reportOptions, log) {
     const verification = needsCheck.length
       ? await agent(
           'verify:merged',
-          quick
+          quick && !needsCheck.some((f) => f.category === 'scanner')
             ? quickVerifyPrompt(quick, needsCheck)
             : prompts.verifyPrompt('all affected layers and known findings', needsCheck, context),
           { schema: VERDICT_SCHEMA }
@@ -331,7 +341,7 @@ async function review(opt, reportOptions, log) {
       ? [
           ...new Set([
             ...quick.skipped.map((f) => f.path),
-            ...(failed.length ? quick.included : []),
+            ...(failed.length || skipped.includes('quick-diff') ? quick.included : []),
           ]),
         ]
       : []
@@ -364,7 +374,9 @@ async function review(opt, reportOptions, log) {
       skipped: pending,
       unaffected: selected.units.filter((u) => affected && !affected.has(u.id)).map((u) => u.id),
       verificationIncomplete,
-      complete: !pending.length && !omitted.length && !verificationIncomplete,
+      ...(scan ? { scannersIncomplete: !scan.complete } : {}),
+      complete:
+        !pending.length && !omitted.length && !verificationIncomplete && (!scan || scan.complete),
     }
     const usage = runner.usage
     const savedUnits = new Map(
@@ -389,6 +401,7 @@ async function review(opt, reportOptions, log) {
       pending,
       coverage,
       usage,
+      scan,
       runs: [
         ...(previous?.runs || []),
         { baseCommit: scope.baseCommit, headCommit: scope.headCommit, at: now, coverage, usage },
@@ -408,6 +421,7 @@ async function review(opt, reportOptions, log) {
         failed,
         coverage,
         usage,
+        scan,
         findingHistory: records,
       },
       reportOptions

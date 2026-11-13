@@ -154,3 +154,39 @@ kasanome install --target all --force
 ```
 
 Browser progress from older reports is used when no Kasanome progress exists. Custom-agent environment variables are `KASANOME_PROMPT_FILE`, `KASANOME_OUT_FILE`, and `KASANOME_SCHEMA_FILE`.
+
+## Static scanners
+
+```sh
+kasanome review --base main --agent codex --scanners auto
+kasanome review --pr 123 --agent codex --scanners gitleaks,semgrep,osv-scanner
+kasanome scan --base main --scanners auto --json
+kasanome review --base main --agent codex --sarif reports/codeql.sarif,reports/custom.sarif
+```
+
+Review scanning is opt-in (`--scanners none` by default). The scanner-only `scan` command defaults to `auto` and makes no model calls. Select comma-separated names; `auto` can be combined with explicit names, such as `auto,semgrep,osv-scanner`. `auto` selects the four local adapters below, rather than enabling network scanners implicitly.
+
+| Name                                                                | Checks                           | Scope                                                                | Network                                                           |
+| ------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| [`gitleaks`](https://github.com/gitleaks/gitleaks#installing)       | Potential secrets                | Pinned head files; reports filtered to changed lines                 | No network required                                               |
+| [`shellcheck`](https://github.com/koalaman/shellcheck#installing)   | Shell mistakes                   | Changed `.sh`, `.bash`, `.ksh` files                                 | No network required                                               |
+| [`hadolint`](https://github.com/hadolint/hadolint#install)          | Dockerfile problems              | Changed Dockerfiles                                                  | No network required                                               |
+| [`actionlint`](https://github.com/rhysd/actionlint#install)         | GitHub Actions workflows         | Changed workflow YAML; nested ShellCheck/Pyflakes disabled           | No network required                                               |
+| [`semgrep`](https://semgrep.dev/docs/getting-started)               | Security patterns                | Pinned head; findings filtered to changed lines                      | Downloads `p/security-audit`; metrics and version checks disabled |
+| [`osv-scanner`](https://google.github.io/osv-scanner/installation/) | Known dependency vulnerabilities | All supported lockfiles in the pinned head, including unchanged ones | Queries vulnerability services; requires v2 CLI                   |
+
+Install the binaries on `PATH` using their official installation instructions. No scanner account or key is added by Kasanome. It does not download binaries, execute project build scripts, or install project dependencies. Scanner executables themselves run with your user's permissions. Repository scanner configuration can affect their results.
+
+`--offline` skips Semgrep and OSV-Scanner, even if Semgrep uses a local rules file. Those skips are visible and make selected scanner coverage partial. It does not make the model backend offline. Use `--semgrep-config <ruleset-or-path>` to choose other rules explicitly; the path is interpreted from the scanner snapshot, or may be absolute. It does not affect `auto` selection.
+
+Each scanner has a 120-second timeout; change it with `--scanner-timeout <seconds>`. Failure, timeout, invalid output, unavailable binaries, and unsupported locations remain visible. Applicable selected scanners that do not finish make overall review coverage partial. Tools with no matching files are reported as not applicable. A snapshot is limited to 10,000 regular files, 16 MB per blob and 128 MB total; exceeding a limit stops scanning. Symlinks and submodules are omitted and make coverage partial. Files are copied directly from Git blobs without checkout hooks or filters; uncommitted files and Git LFS object contents are not materialized.
+
+Candidates overlap added/modified lines in the full base-to-head diff, or the lines next to a pure deletion. Outside-change results are advisories, excluded from model verification and active findings. Dependency advisories often cite unchanged lockfile lines and therefore remain advisories, even when another part of the lockfile changed. Scanner-only results are always unchecked; a successful scan is not a verified code review.
+
+During a review, scanner candidates share the existing finding-check and agent-call limits. Excess candidates remain unverified for later runs. Verification involving scanner candidates may read pinned source and callers even in quick mode; it is not restricted to quick mode's supplied-context character limit. A scan of an unchanged snapshot with identical normalized results does not trigger model rechecks of already checked findings. Scanner absence on a later run is not proof of a fix; known findings require verification to resolve.
+
+`--sarif <paths>` imports SARIF 2.1.0 from other tools without running their commands. Paths are comma-separated and relative to the reviewed repository, or absolute. Reports must use repository-relative artifact paths or absolute paths inside that repository. Standard artifact indexes and URI base IDs are supported. Accepted suppressions are honored. Results without usable source locations are counted as omissions. External reports may be stale: imported findings are candidates, and the verifier checks the pinned source before confirming them.
+
+Review reports add scanner status and outside-change advisories to the dashboard and JSON summary. `<out>/scanners.json` and `<out>/scanners.sarif` contain normalized **unchecked** scanner results, including advisories. Their SARIF properties identify verification status, changed-line membership and reviewed commits. `kasanome scan` defaults to `kasanome/scan/`, separate from review state; it exits 0 when selected scanners finish and 2 when coverage is partial, regardless of candidate count. Ordinary review exit behavior remains unchanged; inspect `coverage.scannersIncomplete` and verification status in JSON automation.
+
+Gitleaks runs with full redaction, and its candidate message/excerpt is replaced with a location and rule. Raw scanner stdout/stderr is not saved. This is not complete source redaction: ordinary review dashboards and caches can include the original source, and the model verifier may read it. Treat saved reports as source code.

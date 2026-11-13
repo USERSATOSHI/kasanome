@@ -13,7 +13,7 @@ export async function runCli(argv = process.argv.slice(2), { defaultAgent } = {}
     } else if (['--version', '-v', '-V'].includes(argv[0])) {
       console.log(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url))).version)
     } else {
-      const command = ['review', 'status'].includes(argv[0]) ? argv.shift() : 'review'
+      const command = ['review', 'status', 'scan'].includes(argv[0]) ? argv.shift() : 'review'
       if (command === 'status' && argv.some((a) => ['--help', '-h'].includes(a))) {
         console.log(
           'Usage: kasanome status [--repo <dir>] [--out <dir>] [--json]\nShow the latest saved review without making model calls.'
@@ -30,6 +30,13 @@ export async function runCli(argv = process.argv.slice(2), { defaultAgent } = {}
       if (options.pr) {
         const { resolvePr } = await import('./pr.mjs')
         options = resolvePr(options)
+      }
+      if (command === 'scan') {
+        if (options.publish || options.render)
+          throw new Error('scan does not publish or render reviews')
+        const { runScan } = await import('./scan.mjs')
+        await runScan(options)
+        return
       }
       if (!options.agent && defaultAgent) options.agent = defaultAgent
       const { runReview } = await import('../review/pipeline.mjs')

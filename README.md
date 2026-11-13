@@ -49,6 +49,24 @@ kasanome review --pr 123 --agent codex --publish 123
 
 Publication is explicit. This updates Kasanome's summary comment, rather than submitting an approving review.
 
+## Add static scanners
+
+Run installed scanners alongside your review:
+
+```sh
+kasanome review --base origin/main --agent codex --scanners auto
+# Scan without launching a model.
+kasanome scan --base origin/main --scanners auto
+# Include security rules and dependency advisories (these need network access).
+kasanome review --base origin/main --agent codex --scanners auto,semgrep,osv-scanner
+# Bring findings from another scanner.
+kasanome review --base origin/main --agent codex --sarif results.sarif
+```
+
+`auto` selects **Gitleaks, ShellCheck, Hadolint, and actionlint** when their files apply. Install scanner binaries on your `PATH` first; Kasanome does not download them. **Semgrep** and **OSV-Scanner v2** are available by explicit selection. Reviews default to no scanners; `scan` defaults to `auto`.
+
+Scanners read a temporary copy of the committed head. Candidates on changed lines enter the existing verification and finding-history flow. Outside-change advisories appear separately. Missing or failed selected tools make scanner coverage partial; they never count as a clean scan. The dashboard shows scanner status, and `scanners.json` / `scanners.sarif` preserve unchecked scanner results. See the [scanner reference](docs/usage.md#static-scanners) for network behavior, limits, and installation links.
+
 ## Recheck after fixes
 
 Rerun the same command when new commits arrive. Kasanome checks affected code, rechecks known findings, and continues pending coverage. An unchanged, completed review can use **zero agent calls**.

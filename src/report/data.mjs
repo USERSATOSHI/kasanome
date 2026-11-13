@@ -25,6 +25,7 @@ function buildData(raw, { repo: repo, agent: agentName }) {
     failed: raw.failed || [],
     coverage: raw.coverage,
     usage: raw.usage,
+    scan: raw.scan || null,
     findingHistory: raw.findingHistory,
     source,
   }

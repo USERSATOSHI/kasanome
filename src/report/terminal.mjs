@@ -13,6 +13,15 @@ export function summarizeReport(data, file) {
     },
     coverage: data.coverage || null,
     usage: data.usage || null,
+    scanners: data.scan
+      ? {
+          complete: data.scan.complete,
+          tools: data.scan.scanners,
+          candidates: data.scan.candidates.length,
+          advisories: data.scan.advisories.length,
+          omitted: data.scan.omitted.length,
+        }
+      : null,
   }
 }
 
@@ -25,6 +34,13 @@ export function formatSummary(summary) {
   ]
   if (coverage?.style === 'quick')
     lines.push('Scope: supplied diff context; no architectural audit.')
+  if (summary.scanners)
+    lines.push(
+      `Scanners: ${summary.scanners.complete ? 'complete' : 'partial'} · ${summary.scanners.candidates} changed-line candidates · ${summary.scanners.advisories} outside-change advisories\n` +
+        summary.scanners.tools
+          .map((s) => `  ${s.name}: ${s.status}${s.reason ? ' (' + s.reason + ')' : ''}`)
+          .join('\n')
+    )
   if (usage)
     lines.push(
       `Usage: ${usage.calls}/${usage.maxCalls} agent calls · ${usage.cacheHits} cached answers · ${usage.tokensKnown ? usage.totalTokens + ' reported tokens' : 'tokens unavailable (partial: ' + usage.totalTokens + ')'}`
