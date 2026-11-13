@@ -6,6 +6,7 @@ import { diagram } from './diagram.js'
 import { viewCode } from './code.js'
 import { anchorLine } from './model.js'
 import { readKey } from './reading.js'
+import { scannerSummary } from './scanners.js'
 export function viewOverview() {
   const open = findings.filter((f) => f.status !== 'fixed-later')
   const triaged = findings.filter((f) => triage(f.id)).length
@@ -113,6 +114,7 @@ export function viewOverview() {
         h(D.failed.join(', ')) +
         '</div>'
       : '') +
+    scannerSummary(D.scan) +
     '<h2>Architecture</h2><div class="card">' +
     diagram() +
     '</div><div class="grid2"><div><h2>System</h2><div class="card">' +
